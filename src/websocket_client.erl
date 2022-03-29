@@ -27,10 +27,10 @@ start_link(URL, Handler, HandlerArgs, AsyncStart) when is_boolean(AsyncStart) ->
 start_link(URL, Handler, HandlerArgs, Opts) when is_binary(URL) ->
 	start_link(erlang:binary_to_list(URL), Handler, HandlerArgs, Opts);
 start_link(URL, Handler, HandlerArgs, Opts) when is_list(Opts) ->
-    case http_uri:parse(URL, [{scheme_defaults, [{ws,80},{wss,443}]}]) of
-        {ok, {Protocol, _, Host, Port, Path, Query}} ->
+    case uri_string:parse(URL) of
+        #{scheme := Scheme, host := Host, port := Port, path := Path, query := Query} = _UriMap ->
             proc_lib:start_link(?MODULE, ws_client_init,
-                                [Handler, Protocol, Host, Port, Path ++ Query, HandlerArgs, Opts]);
+                                [Handler, Scheme, Host, Port, Path ++ Query, HandlerArgs, Opts]);
         {error, _} = Error ->
             Error
     end.
@@ -181,7 +181,7 @@ handle_websocket_message(WSReq, HandlerState, Buffer, Message) ->
             ok = send(Frame, WSReq),
             websocket_loop(WSReq, HandlerState, Buffer);
         {_Closed, Socket} ->
-            websocket_close(WSReq, HandlerState, remote);
+            websocket_close(WSReq, HandlerState, remote, undefined);
         {_TransportType, Socket, Data} ->
             case Remaining of
                 undefined ->
@@ -196,8 +196,8 @@ handle_websocket_message(WSReq, HandlerState, Buffer, Message) ->
                 HandlerResponse ->
                     handle_response(WSReq, HandlerResponse, Buffer)
             catch
-                _:Reason ->
-                    websocket_close(WSReq, HandlerState, {handler, Reason})
+                _:Reason:Stacktrace ->
+                    websocket_close(WSReq, HandlerState, {handler, Reason}, Stacktrace)
             end
     end.
 
@@ -213,29 +213,30 @@ cancel_keepalive_timer(WSReq) ->
 
 -spec websocket_close(WSReq :: websocket_req:req(),
                       HandlerState :: any(),
-                      Reason :: tuple()) -> ok.
-websocket_close(WSReq, HandlerState, Reason) ->
+                      Reason :: tuple(),
+                      Stacktrace :: any()) -> ok.
+websocket_close(WSReq, HandlerState, Reason, Stacktrace) ->
     Handler = websocket_req:handler(WSReq),
     try Handler:websocket_terminate(Reason, WSReq, HandlerState) of
         _ ->
             case Reason of
                 normal -> ok;
-                _      -> error_info(Handler, Reason, HandlerState)
+                _      -> error_info(Handler, Reason, Stacktrace, HandlerState)
             end,
             exit(Reason)
     catch
-        _:Reason2 ->
-            error_info(Handler, Reason2, HandlerState),
+        _:Reason2:Stacktrace2 ->
+            error_info(Handler, Reason2, Stacktrace2, HandlerState),
             exit(Reason2)
     end.
 
-error_info(Handler, Reason, State) ->
-    error_logger:error_msg(
+error_info(Handler, Reason, Stacktrace, State) ->
+    logger:error(
         "** Websocket handler ~p terminating~n"
         "** for the reason ~p~n"
         "** Handler state was ~p~n"
         "** Stacktrace: ~p~n~n",
-        [Handler, Reason, State, erlang:get_stacktrace()]).
+        [Handler, Reason, State, Stacktrace]).
 
 %% @doc Key sent in initial handshake
 -spec generate_ws_key() ->
@@ -356,9 +357,9 @@ retrieve_frame(WSReq, HandlerState, Opcode, Len, Data, Buffer) ->
                          % for error code descriptions.
                          _ -> {remote, Code}
                      end,
-            websocket_close(WSReq, HandlerState, Reason);
+            websocket_close(WSReq, HandlerState, Reason, undefined);
         close ->
-            websocket_close(WSReq, HandlerState, remote);
+            websocket_close(WSReq, HandlerState, remote, undefined);
         %% Non-control continuation frame
         _ when Opcode < 8, Continuation =/= undefined, Fin == 0 ->
             %% Append to previously existing continuation payloads and continue
@@ -377,8 +378,8 @@ retrieve_frame(WSReq, HandlerState, Opcode, Len, Data, Buffer) ->
                 HandlerResponse ->
                     handle_response(websocket_req:remaining(undefined, WSReq1),
                                     HandlerResponse, Rest)
-            catch _:Reason ->
-                websocket_close(WSReq, HandlerState, {handler, Reason})
+            catch _:Reason:Stacktrace ->
+                websocket_close(WSReq, HandlerState, {handler, Reason}, Stacktrace)
             end;
         _ ->
             try Handler:websocket_handle(
@@ -387,8 +388,8 @@ retrieve_frame(WSReq, HandlerState, Opcode, Len, Data, Buffer) ->
                 HandlerResponse ->
                     handle_response(websocket_req:remaining(undefined, WSReq),
                                     HandlerResponse, Rest)
-            catch _:Reason ->
-                websocket_close(WSReq, HandlerState, {handler, Reason})
+            catch _:Reason:Stacktrace ->
+                websocket_close(WSReq, HandlerState, {handler, Reason}, Stacktrace)
             end
     end.
 
@@ -407,7 +408,7 @@ handle_response(WSReq, {reply, Frame, HandlerState}, Buffer) ->
                    websocket_loop(WSReq, HandlerState, Buffer)
            end;
         {error, Reason} ->
-            websocket_close(WSReq, HandlerState, {local, Reason})
+            websocket_close(WSReq, HandlerState, {local, Reason}, undefined)
     end;
 handle_response(WSReq, {ok, HandlerState}, Buffer) ->
     %% we can still have more messages in buffer
@@ -420,7 +421,7 @@ handle_response(WSReq, {ok, HandlerState}, Buffer) ->
 
 handle_response(WSReq, {close, Payload, HandlerState}, _) ->
     send({close, Payload}, WSReq),
-    websocket_close(WSReq, HandlerState, normal).
+    websocket_close(WSReq, HandlerState, normal, undefined).
 
 %% @doc Encodes the data with a header (including a masking key) and
 %% masks the data

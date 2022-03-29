@@ -4,6 +4,8 @@
   {vsn, "0.6.1"},
   {registered, []},
   {applications, [
+                  kernel,
+                  stdlib,
                   ssl,
                   crypto,
                   inets
