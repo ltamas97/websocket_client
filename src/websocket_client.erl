@@ -28,7 +28,8 @@ start_link(URL, Handler, HandlerArgs, Opts) when is_binary(URL) ->
 	start_link(erlang:binary_to_list(URL), Handler, HandlerArgs, Opts);
 start_link(URL, Handler, HandlerArgs, Opts) when is_list(Opts) ->
     case uri_string:parse(URL) of
-        #{scheme := Scheme, host := Host, port := Port, path := Path, query := Query} = _UriMap ->
+        #{scheme := Scheme, host := Host, port := Port, path := Path} = UriMap ->
+            Query = maps:get(query, UriMap, ""),
             proc_lib:start_link(?MODULE, ws_client_init,
                                 [Handler, Scheme, Host, Port, Path ++ Query, HandlerArgs, Opts]);
         {error, _} = Error ->
