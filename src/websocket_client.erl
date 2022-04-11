@@ -31,7 +31,7 @@ start_link(URL, Handler, HandlerArgs, Opts) when is_list(Opts) ->
         #{scheme := Scheme, host := Host, port := Port, path := Path} = UriMap ->
             Query = maps:get(query, UriMap, ""),
             proc_lib:start_link(?MODULE, ws_client_init,
-                                [Handler, Scheme, Host, Port, Path ++ Query, HandlerArgs, Opts]);
+                                [Handler, to_atom(Scheme), Host, Port, Path ++ Query, HandlerArgs, Opts]);
         {error, _} = Error ->
             Error
     end.
@@ -484,3 +484,7 @@ set_continuation_if_empty(WSReq, Opcode) ->
         _ ->
             WSReq
     end.
+
+-spec to_atom(Scheme :: unicode:chardata()) -> atom().
+to_atom(Scheme) when is_list(Scheme) -> list_to_atom(Scheme);
+to_atom(Scheme) when is_binary(Scheme) -> binary_to_atom(Scheme).
