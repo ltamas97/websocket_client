@@ -486,5 +486,5 @@ set_continuation_if_empty(WSReq, Opcode) ->
     end.
 
 -spec to_atom(Scheme :: unicode:chardata()) -> atom().
-to_atom(Scheme) when is_list(Scheme) -> list_to_atom(Scheme);
-to_atom(Scheme) when is_binary(Scheme) -> binary_to_atom(Scheme).
+to_atom(Scheme) when is_list(Scheme) -> erlang:list_to_atom(Scheme);
+to_atom(Scheme) when is_binary(Scheme) -> erlang:binary_to_atom(Scheme, latin1).
